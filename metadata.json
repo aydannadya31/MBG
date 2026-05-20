@@ -1,0 +1,6 @@
+{
+  "name": "MBG - Moda Burada Galerisi",
+  "description": "Yüksek kaliteli 4K moda galerisi. Yapay zeka tarafından her saat başı yenilenen, profesyonel modellerin farklı mekanlardaki doğal tarzlarını sunan prestijli bir moda arşivi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["AI Content Generation", "Real-time Updates", "Cloud Archiving"]
+}
