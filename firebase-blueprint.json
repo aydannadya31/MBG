@@ -1,0 +1,46 @@
+{
+  "entities": {
+    "FashionEntry": {
+      "title": "Fashion Entry",
+      "description": "A high-resolution AI generated fashion capture.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "timestamp": { "type": "integer" },
+        "dateKey": { "type": "string" },
+        "location": { "type": "string" },
+        "prompt": { "type": "string" },
+        "isExample": { "type": "boolean" },
+        "likes": { "type": "integer", "description": "Number of positive feedback counts" },
+        "dislikes": { "type": "integer", "description": "Number of negative feedback counts" }
+      },
+      "required": ["id", "imageUrl", "timestamp", "dateKey", "location", "prompt"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "A user or visitor comment on the platform.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorRole": { "type": "string", "enum": ["user", "admin", "visitor"] },
+        "content": { "type": "string" },
+        "timestamp": { "type": "integer" },
+        "isHidden": { "type": "boolean" },
+        "adminReply": { "type": "string" }
+      },
+      "required": ["id", "authorName", "authorRole", "content", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/entries/{entryId}": {
+      "schema": "FashionEntry",
+      "description": "Global collection of all fashion captures."
+    },
+    "/comments/{commentId}": {
+      "schema": "Comment",
+      "description": "User and visitor feedback collection."
+    }
+  }
+}
