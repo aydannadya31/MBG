@@ -6,7 +6,7 @@
 
 This contains everything you need to run your app locally.
 
-View your app in AI Studio: https://ai.studio/apps/0ed3050f-e373-4352-b550-44fadaac413b
+View your app in web: https://modaburada.gt.tc
 
 ## Run Locally
 
