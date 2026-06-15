@@ -628,6 +628,8 @@ export default function App() {
     return saved ? parseInt(saved) : null;
   });
 
+  const [notification, setNotification] = useState<string | null>(null);
+
   const toggleSystem = () => {
     if (systemEnabled) {
       setShowPasswordModal(true);
@@ -661,6 +663,13 @@ export default function App() {
       localStorage.removeItem('mbg_cooldown');
     }
   }, [cooldownUntil]);
+
+  useEffect(() => {
+    if (notification) {
+      const t = setTimeout(() => setNotification(null), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [notification]);
 
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [currentLang, setCurrentLang] = useState(LANGUAGES[0]);
@@ -1197,6 +1206,7 @@ export default function App() {
     // Safety check for cooldown
     if (cooldownUntil && Date.now() < cooldownUntil) {
       setQuotaReached(true);
+      if (force) setNotification(`Kota limiti nedeniyle ${new Date(cooldownUntil).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}'e kadar bekleniyor.`);
       return;
     }
 
@@ -3288,6 +3298,11 @@ export default function App() {
                 {systemEnabled ? t.shutdownSystem : t.startupSystem}
               </button>
 
+              {notification && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-[10px] font-medium text-red-700 uppercase tracking-wider animate-in slide-in-from-bottom duration-300">
+                  {notification}
+                </div>
+              )}
               <button 
                 onClick={() => checkAndGenerate(true)}
                 disabled={isGeneratingState}
