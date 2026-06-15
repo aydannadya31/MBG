@@ -1760,7 +1760,7 @@ export default function App() {
                     <Sparkles size={16} className="text-zinc-400" />
                     <span className="text-[10px] uppercase tracking-[0.4em] font-bold text-zinc-400">{t.aiArchive}</span>
                   </div>
-                  <h3 className="text-4xl font-black uppercase tracking-tighter mb-4 text-white lg:text-zinc-900">{selectedEntry.location}</h3>
+                  <h3 className="text-lg sm:text-xl font-black uppercase tracking-tighter mb-4 text-white lg:text-zinc-900">{selectedEntry.location}</h3>
                   <div className="flex gap-4">
                     <span className="text-[10px] uppercase tracking-widest bg-white/10 lg:bg-zinc-100 px-3 py-1 rounded-full text-zinc-300 lg:text-zinc-500">{currentDateKey}</span>
                     <span className="text-[10px] uppercase tracking-widest bg-zinc-800 lg:bg-zinc-900 px-3 py-1 rounded-full text-white">4K EDITORIAL</span>
@@ -2326,7 +2326,7 @@ export default function App() {
                                <div className="w-1.5 h-1.5 rounded-full bg-zinc-900 animate-pulse" />
                                <span className="text-[11px] uppercase tracking-[0.6em] font-black text-zinc-400">01 — {t.currentEditorial}</span>
                             </div>
-                            <h2 className="text-[1.25rem] md:text-[2.5rem] font-black uppercase tracking-tighter leading-[0.8] text-zinc-900 selection:bg-zinc-900 selection:text-white transition-all duration-700">
+                            <h2 className="text-[0.9rem] md:text-[1.4rem] font-black uppercase tracking-tighter leading-[0.9] text-zinc-900 selection:bg-zinc-900 selection:text-white transition-all duration-700">
                               {todayEntries[0].location}
                             </h2>
                             <div className="flex flex-nowrap overflow-x-auto scrollbar-hide gap-3 justify-center lg:justify-start pt-2">
