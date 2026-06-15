@@ -6,6 +6,7 @@ import { db, OperationType, handleFirestoreError, auth, googleProvider, signInWi
 import { generateNewPiece } from './services/gemini';
 import { sendMessage, translateToTurkish, Message } from './services/chatService';
 import { ContentEntry } from './types';
+import { getFallbackEntries } from './data/fallbackData';
 
 type View = 'home' | 'galleries' | 'technical' | 'legal' | 'press' | 'vision' | 'comments';
 
@@ -44,6 +45,7 @@ const TRANSLATIONS: Record<string, any> = {
     systemDisabled: "Sistem Devre Dışı",
     shutdownSystem: "Sistemi Kapat",
     startupSystem: "Sistemi Başlat",
+    generateNow: "Hemen Görsel Üret",
     enterPassword: "Şifre Giriniz",
     passwordPlaceholder: "Sistem Anahtarı",
     confirm: "Onayla",
@@ -170,6 +172,7 @@ const TRANSLATIONS: Record<string, any> = {
     systemDisabled: "System Disabled",
     shutdownSystem: "Shutdown System",
     startupSystem: "Startup System",
+    generateNow: "Generate Now",
     enterPassword: "Enter Password",
     passwordPlaceholder: "System Key",
     confirm: "Confirm",
@@ -556,10 +559,11 @@ LANGUAGES.forEach(lang => {
 
 const ImageWithSkeleton = ({ src, alt, className, loading = "lazy", ...props }: { src: string; alt: string; className?: string; loading?: "lazy" | "eager"; [key: string]: any }) => {
   const [isLoaded, setIsLoaded] = useState(false);
+  const [hasError, setHasError] = useState(false);
 
   return (
-    <div className="relative w-full h-full overflow-hidden">
-      {!isLoaded && (
+    <div className="relative w-full h-full overflow-hidden flex items-center justify-center bg-zinc-100">
+      {!isLoaded && !hasError && (
         <motion.div 
           initial={{ opacity: 1 }}
           animate={{ opacity: [0.3, 0.6, 0.3] }}
@@ -567,17 +571,41 @@ const ImageWithSkeleton = ({ src, alt, className, loading = "lazy", ...props }: 
           className="absolute inset-0 bg-zinc-200"
         />
       )}
-      <img
-        src={src}
-        alt={alt}
-        className={`${className} transition-opacity duration-1000 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
-        onLoad={() => setIsLoaded(true)}
-        loading={loading}
-        decoding="async"
-        {...props}
-      />
+      {hasError ? (
+        <div className="flex flex-col items-center justify-center text-zinc-400 gap-2 p-6 text-center">
+          <Camera size={24} className="stroke-[1.5] text-zinc-400" />
+          <span className="text-[8px] font-bold tracking-widest text-zinc-400 uppercase">GÖRSEL_YÜKLENEMEDİ</span>
+        </div>
+      ) : (
+        <img
+          src={src}
+          alt={alt}
+          className={`${className} transition-opacity duration-1000 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
+          onLoad={() => setIsLoaded(true)}
+          onError={() => setHasError(true)}
+          loading={loading}
+          decoding="async"
+          {...props}
+        />
+      )}
     </div>
   );
+};
+
+const getTRDateKey = (timestamp?: Date | number): string => {
+  const d = timestamp ? new Date(timestamp) : new Date();
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Istanbul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    return formatter.format(d);
+  } catch (e) {
+    const trDate = new Date(d.getTime() + 3 * 60 * 60 * 1000);
+    return trDate.toISOString().split('T')[0];
+  }
 };
 
 export default function App() {
@@ -585,8 +613,10 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [countdown, setCountdown] = useState(3600);
   const [view, setView] = useState<View>('home');
-  const [currentDateKey, setCurrentDateKey] = useState(new Date().toISOString().split('T')[0]);
-  const [selectedArchiveDate, setSelectedArchiveDate] = useState<string | null>(null);
+  const [currentDateKey, setCurrentDateKey] = useState(getTRDateKey());
+  const [selectedArchiveYear, setSelectedArchiveYear] = useState<string>('all');
+  const [selectedArchiveMonth, setSelectedArchiveMonth] = useState<string>('all');
+  const [selectedArchiveDay, setSelectedArchiveDay] = useState<string>('all');
   const [quotaReached, setQuotaReached] = useState(false);
   const [systemEnabled, setSystemEnabled] = useState<boolean>(() => {
     const saved = localStorage.getItem('mbg_system_enabled');
@@ -688,14 +718,99 @@ export default function App() {
 
   const allDates = Object.keys(visibleHistory).sort().reverse();
 
+  const filteredDates = useMemo(() => {
+    return allDates.filter(dateStr => {
+      const parts = dateStr.split('-');
+      if (parts.length < 3) return false;
+      const [year, month, day] = parts;
+      if (selectedArchiveYear !== 'all' && year !== selectedArchiveYear) return false;
+      if (selectedArchiveMonth !== 'all' && month !== selectedArchiveMonth) return false;
+      if (selectedArchiveDay !== 'all' && day !== selectedArchiveDay) return false;
+      return true;
+    });
+  }, [allDates, selectedArchiveYear, selectedArchiveMonth, selectedArchiveDay]);
+
+  const availableYears = useMemo(() => {
+    const years = new Set<string>();
+    allDates.forEach(dateStr => {
+      const parts = dateStr.split('-');
+      if (parts[0]) years.add(parts[0]);
+    });
+    return Array.from(years).sort().reverse();
+  }, [allDates]);
+
+  const availableMonths = useMemo(() => {
+    const months = new Set<string>();
+    allDates.forEach(dateStr => {
+      const parts = dateStr.split('-');
+      if (parts.length >= 2) {
+        const [y, m] = parts;
+        if (selectedArchiveYear === 'all' || y === selectedArchiveYear) {
+          months.add(m);
+        }
+      }
+    });
+    return Array.from(months).sort();
+  }, [allDates, selectedArchiveYear]);
+
+  const availableDays = useMemo(() => {
+    const days = new Set<string>();
+    allDates.forEach(dateStr => {
+      const parts = dateStr.split('-');
+      if (parts.length >= 3) {
+        const [y, m, d] = parts;
+        const matchesYear = (selectedArchiveYear === 'all' || y === selectedArchiveYear);
+        const matchesMonth = (selectedArchiveMonth === 'all' || m === selectedArchiveMonth);
+        if (matchesYear && matchesMonth) {
+          days.add(d);
+        }
+      }
+    });
+    return Array.from(days).sort();
+  }, [allDates, selectedArchiveYear, selectedArchiveMonth]);
+
+  const handleYearChange = (year: string) => {
+    setSelectedArchiveYear(year);
+    setSelectedArchiveMonth('all');
+    setSelectedArchiveDay('all');
+  };
+
+  const handleMonthChange = (month: string) => {
+    setSelectedArchiveMonth(month);
+    setSelectedArchiveDay('all');
+  };
+
+  const handleDayChange = (day: string) => {
+    setSelectedArchiveDay(day);
+  };
+
+  const getMonthName = (monthStr: string, langCode: string) => {
+    try {
+      const date = new Date(2026, parseInt(monthStr, 10) - 1, 15);
+      const formatted = date.toLocaleDateString(langCode === 'TR' ? 'tr-TR' : 'en-US', { month: 'long' });
+      return formatted.toUpperCase();
+    } catch (e) {
+      const trNames: Record<string, string> = {
+        '01': 'OCAK', '02': 'ŞUBAT', '03': 'MART', '04': 'NİSAN',
+        '05': 'MAYIS', '06': 'HAZİRAN', '07': 'TEMMUZ', '08': 'AĞUSTOS',
+        '09': 'EYLÜL', '10': 'EKİM', '11': 'KASIM', '12': 'ARALIK'
+      };
+      return trNames[monthStr] || monthStr;
+    }
+  };
+
+  const getDayLabel = (dayStr: string) => {
+    return parseInt(dayStr, 10).toString();
+  };
+
   const todayEntries = useMemo(() => {
-    const utcToday = new Date().toISOString().split('T')[0];
-    const forToday = visibleEntries.filter(e => e.dateKey === utcToday);
+    const trToday = getTRDateKey();
+    const forToday = visibleEntries.filter(e => e.dateKey === trToday);
     
     // If we have strictly visible items but none for "today", fallback to latest visible overall
     if (forToday.length > 0) {
       if (forToday.length < 4) {
-        const others = visibleEntries.filter(e => e.dateKey !== utcToday).slice(0, 8);
+        const others = visibleEntries.filter(e => e.dateKey !== trToday).slice(0, 8);
         const combined = [...forToday];
         others.forEach(o => {
           if (!combined.find(c => c.id === o.id)) combined.push(o);
@@ -1054,12 +1169,18 @@ export default function App() {
         } as ContentEntry;
       });
       
-      // Show all recent items on the home page to ensure it's never empty
-      setEntries(allItems);
+      // If the Firestore db is empty, populate state with beautifully curated fallback images
+      if (allItems.length === 0) {
+        setEntries(getFallbackEntries());
+      } else {
+        setEntries(allItems);
+      }
       
       setLoading(false);
     }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'entries');
+      console.warn("Firestore collection load failed or empty. Sourcing curated archive assets locally.", error);
+      // Fallback to local curated assets if Firestore fails (offline, unprovisioned snapshot or permission unpropagated)
+      setEntries(getFallbackEntries());
       setLoading(false);
     });
 
@@ -1168,7 +1289,7 @@ export default function App() {
       });
       
       // Daily Reset Check
-      const today = new Date().toISOString().split('T')[0];
+      const today = getTRDateKey();
       if (today !== currentDateKey) {
         setCurrentDateKey(today);
       }
@@ -1192,12 +1313,7 @@ export default function App() {
       if (view === 'home') {
         visibleList = visibleEntries;
       } else if (view === 'galleries') {
-        if (selectedArchiveDate) {
-          visibleList = visibleHistory[selectedArchiveDate] || [];
-        } else {
-          const dates = Object.keys(visibleHistory).sort().reverse();
-          visibleList = dates.flatMap(date => visibleHistory[date]);
-        }
+        visibleList = filteredDates.flatMap(date => visibleHistory[date] || []);
       }
 
       if (visibleList.length <= 1) return;
@@ -1218,7 +1334,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedEntry, view, visibleEntries, visibleHistory, selectedArchiveDate]);
+  }, [selectedEntry, view, visibleEntries, visibleHistory, filteredDates]);
 
   const handleDownload = (res: string) => {
     if (!selectedEntry) return;
@@ -1490,13 +1606,13 @@ export default function App() {
 
       <AnimatePresence>
         {selectedEntry && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-12 overflow-hidden">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 md:p-12 overflow-hidden">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setSelectedEntry(null)}
-              className="absolute inset-0 bg-white/95 backdrop-blur-xl"
+              className="absolute inset-0 bg-black/80 md:bg-white/95 backdrop-blur-xl"
             />
             
             <motion.div 
@@ -1504,18 +1620,18 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative w-full max-w-7xl max-h-[90vh] bg-white border border-zinc-200 shadow-[0_0_100px_rgba(0,0,0,0.1)] rounded-3xl overflow-hidden flex flex-col lg:flex-row"
+              className="relative w-full h-full md:max-h-[90vh] md:max-w-7xl bg-white md:border md:border-zinc-200 md:shadow-[0_0_100px_rgba(0,0,0,0.1)] md:rounded-3xl overflow-hidden flex flex-col lg:flex-row"
             >
               <button 
                 onClick={() => setSelectedEntry(null)}
-                className="absolute top-6 right-6 z-20 p-3 bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded-full transition-all"
+                className="absolute top-6 right-6 z-30 p-3 bg-black/40 hover:bg-black/60 text-white rounded-full border border-white/10 backdrop-blur-md transition-all lg:bg-zinc-100 lg:text-zinc-600 lg:hover:bg-zinc-200 lg:border-transparent"
               >
                 <X size={20} />
               </button>
 
               {/* Modal Image Area */}
               <div 
-                className={`lg:w-2/3 h-[40vh] sm:h-[50vh] md:h-[60vh] lg:h-full bg-zinc-50 relative group overflow-hidden ${zoom > 1 ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in'}`}
+                className={`absolute inset-0 lg:relative lg:w-2/3 h-full lg:h-full bg-zinc-950 lg:bg-zinc-50 group overflow-hidden ${zoom > 1 ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in'}`}
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
@@ -1526,7 +1642,7 @@ export default function App() {
                 onWheel={handleWheel}
               >
                 <div 
-                  className="w-full h-full transition-transform duration-200"
+                   className="w-full h-full transition-transform duration-200"
                   style={{ 
                     transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px) rotate(${rotation}deg)`,
                     transformOrigin: 'center'
@@ -1535,50 +1651,50 @@ export default function App() {
                   <ImageWithSkeleton 
                     src={selectedEntry.imageUrl} 
                     alt={selectedEntry.location} 
-                    className="w-full h-full object-contain p-8 lg:p-16 pointer-events-none"
+                    className="w-full h-full object-cover lg:object-contain p-0 lg:p-16 pointer-events-none"
                     referrerPolicy="no-referrer"
                   />
                 </div>
 
                 {/* Zoom Controls */}
-                <div className={`absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-2 px-6 py-3 bg-white/90 backdrop-blur-md rounded-full border border-zinc-200 shadow-xl transition-all duration-300 ${zoom > 1 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 group-hover:opacity-100 group-hover:translate-y-0'}`}>
+                <div className={`absolute top-6 left-6 z-20 flex items-center gap-1.5 px-3 py-1.5 bg-black/40 hover:bg-black/60 text-white backdrop-blur-md rounded-full border border-white/10 shadow-xl transition-all duration-300 lg:top-auto lg:left-1/2 lg:-translate-x-1/2 lg:bottom-8 lg:bg-white/90 lg:text-zinc-600 lg:border-zinc-200 lg:px-6 lg:py-3 ${zoom > 1 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 group-hover:opacity-100 group-hover:translate-y-0'}`}>
                   <button 
                     type="button"
                     onClick={(e) => { e.stopPropagation(); handleZoomOut(); }}
-                    className="p-2 hover:bg-zinc-100 rounded-full text-zinc-600 transition-colors"
+                    className="p-2 hover:bg-white/10 lg:hover:bg-zinc-100 rounded-full text-white lg:text-zinc-600 transition-colors"
                     title="Zoom Out"
                   >
                     <ZoomOut size={18} />
                   </button>
-                  <div className="w-[1px] h-4 bg-zinc-200 mx-2" />
-                  <span className="text-[10px] font-mono font-bold w-12 text-center text-zinc-900">
+                  <div className="w-[1px] h-4 bg-white/20 lg:bg-zinc-200 mx-2" />
+                  <span className="text-[10px] font-mono font-bold w-12 text-center text-white lg:text-zinc-900">
                     {Math.round(zoom * 100)}%
                   </span>
-                  <div className="w-[1px] h-4 bg-zinc-200 mx-2" />
+                  <div className="w-[1px] h-4 bg-white/20 lg:bg-zinc-200 mx-2 text-white/30" />
                   <button 
                     type="button"
                     onClick={(e) => { e.stopPropagation(); handleZoomIn(); }}
-                    className="p-2 hover:bg-zinc-100 rounded-full text-zinc-600 transition-colors"
+                    className="p-2 hover:bg-white/10 lg:hover:bg-zinc-100 rounded-full text-white lg:text-zinc-600 transition-colors"
                     title="Zoom In"
                   >
                     <ZoomIn size={18} />
                   </button>
-                  <div className="w-[1px] h-4 bg-zinc-200 mx-2" />
+                  <div className="w-[1px] h-4 bg-white/20 lg:bg-zinc-200 mx-2" />
                   <button 
                     type="button"
                     onClick={(e) => { e.stopPropagation(); handleRotate(); }}
-                    className="p-2 hover:bg-zinc-100 rounded-full text-zinc-600 transition-colors"
+                    className="p-2 hover:bg-white/10 lg:hover:bg-zinc-100 rounded-full text-white lg:text-zinc-600 transition-colors"
                     title={t.rotate}
                   >
                     <RotateCw size={18} />
                   </button>
                   {zoom > 1 && (
                     <>
-                      <div className="w-[1px] h-4 bg-zinc-200 mx-2" />
+                      <div className="w-[1px] h-4 bg-white/20 lg:bg-zinc-200 mx-2" />
                       <button 
                         type="button"
                         onClick={(e) => { e.stopPropagation(); handleResetZoom(); }}
-                        className="p-2 hover:bg-zinc-100 rounded-full text-red-500 hover:text-red-600 transition-all"
+                        className="p-2 hover:bg-white/10 lg:hover:bg-zinc-100 rounded-full text-red-400 lg:text-red-500 hover:text-red-500 lg:hover:text-red-600 transition-all"
                         title="Reset Zoom"
                       >
                         <RotateCcw size={16} />
@@ -1588,14 +1704,14 @@ export default function App() {
                 </div>
 
                 {zoom > 1 && (
-                    <div className="absolute top-8 left-8 flex items-center gap-3 bg-zinc-900/10 backdrop-blur-md px-4 py-2 rounded-full text-[10px] uppercase tracking-widest font-bold text-zinc-500">
+                    <div className="absolute top-20 left-6 z-20 flex items-center gap-3 bg-black/40 border border-white/10 backdrop-blur-md px-4 py-2 rounded-full text-[10px] uppercase tracking-widest font-bold text-zinc-300 lg:top-8 lg:left-8 lg:bg-zinc-900/10 lg:text-zinc-500 lg:border-none">
                       <Move size={12} />
                       {t.exploreDrag}
                     </div>
                 )}
 
                 {/* Feedback Floating Action Buttons */}
-                <div className="absolute bottom-10 right-10 flex flex-col gap-3 group/feedback">
+                <div className="absolute bottom-[52dvh] right-6 z-20 flex flex-row lg:flex-col gap-3 group/feedback lg:bottom-10 lg:right-10">
                     <button
                       onClick={() => handleFeedback(selectedEntry.id, 'like')}
                       disabled={!!userFeedback[selectedEntry.id]}
@@ -1605,7 +1721,7 @@ export default function App() {
                           ? 'bg-zinc-900 border-zinc-900 text-white'
                           : userFeedback[selectedEntry.id]
                             ? 'bg-white/40 border-white/20 text-zinc-300 opacity-50'
-                            : 'bg-white/80 border-white/20 hover:bg-white text-zinc-900 hover:scale-110'
+                            : 'bg-black/40 border-white/10 hover:bg-black/60 text-white hover:scale-110 lg:bg-white/80 lg:border-white/20 lg:hover:bg-white lg:text-zinc-900'
                       }`}
                     >
                       <ThumbsUp size={18} />
@@ -1624,7 +1740,7 @@ export default function App() {
                           ? 'bg-zinc-900 border-zinc-900 text-white'
                           : userFeedback[selectedEntry.id]
                             ? 'bg-white/40 border-white/20 text-zinc-300 opacity-50'
-                            : 'bg-white/80 border-white/20 hover:bg-white text-zinc-900 hover:scale-110'
+                            : 'bg-black/40 border-white/10 hover:bg-black/60 text-white hover:scale-110 lg:bg-white/80 lg:border-white/20 lg:hover:bg-white lg:text-zinc-900'
                       }`}
                     >
                       <ThumbsDown size={18} />
@@ -1638,23 +1754,23 @@ export default function App() {
               </div>
 
               {/* Modal Info Area */}
-              <div className="lg:w-1/3 flex flex-col p-8 lg:p-12 border-l border-zinc-100 overflow-y-auto">
+              <div className="absolute bottom-0 left-0 right-0 z-10 max-h-[50dvh] overflow-y-auto bg-black/80 backdrop-blur-2xl border-t border-white/10 p-6 sm:p-8 rounded-t-[2.5rem] text-white lg:relative lg:bottom-auto lg:left-auto lg:right-auto lg:z-auto lg:max-h-none lg:overflow-y-auto lg:p-12 lg:bg-white lg:backdrop-blur-none lg:text-zinc-900 lg:border-t-0 lg:border-l lg:border-zinc-100 lg:rounded-none lg:w-1/3 lg:h-full lg:flex-1 lg:min-h-0 lg:flex lg:flex-col">
                 <div className="mb-12">
                   <div className="flex items-center gap-3 mb-6">
                     <Sparkles size={16} className="text-zinc-400" />
                     <span className="text-[10px] uppercase tracking-[0.4em] font-bold text-zinc-400">{t.aiArchive}</span>
                   </div>
-                  <h3 className="text-4xl font-black uppercase tracking-tighter mb-4">{selectedEntry.location}</h3>
+                  <h3 className="text-4xl font-black uppercase tracking-tighter mb-4 text-white lg:text-zinc-900">{selectedEntry.location}</h3>
                   <div className="flex gap-4">
-                    <span className="text-[10px] uppercase tracking-widest bg-zinc-100 px-3 py-1 rounded-full text-zinc-500">{currentDateKey}</span>
-                    <span className="text-[10px] uppercase tracking-widest bg-zinc-900 px-3 py-1 rounded-full text-white">4K EDITORIAL</span>
+                    <span className="text-[10px] uppercase tracking-widest bg-white/10 lg:bg-zinc-100 px-3 py-1 rounded-full text-zinc-300 lg:text-zinc-500">{currentDateKey}</span>
+                    <span className="text-[10px] uppercase tracking-widest bg-zinc-800 lg:bg-zinc-900 px-3 py-1 rounded-full text-white">4K EDITORIAL</span>
                   </div>
                 </div>
 
                 <div className="mb-12 space-y-6">
                   {selectedEntry.description && (
-                    <div className="mb-8 p-6 border-l-2 border-zinc-200">
-                      <p className="text-sm font-serif italic text-zinc-600 leading-relaxed">
+                    <div className="mb-8 p-6 border-l-2 border-white/20 lg:border-zinc-200">
+                      <p className="text-sm font-serif italic text-zinc-200 lg:text-zinc-600 leading-relaxed">
                         {selectedEntry.description}
                       </p>
                     </div>
@@ -1671,7 +1787,7 @@ export default function App() {
                           setEditingPromptId(selectedEntry.id);
                           setEditPromptValue(selectedEntry.prompt || '');
                         }}
-                        className="text-[9px] uppercase tracking-widest font-black text-zinc-400 hover:text-zinc-900 flex items-center gap-2"
+                        className="text-[9px] uppercase tracking-widest font-black text-zinc-400 hover:text-white lg:hover:text-zinc-900 flex items-center gap-2"
                       >
                          <Edit3 size={12} />
                          {t.edit}
@@ -1684,31 +1800,31 @@ export default function App() {
                       <textarea 
                         value={editPromptValue}
                         onChange={(e) => setEditPromptValue(e.target.value)}
-                        className="w-full h-80 p-6 bg-zinc-50 border border-zinc-100 rounded-3xl text-xs font-mono text-zinc-600 focus:outline-none focus:border-zinc-900 transition-colors"
+                        className="w-full h-80 p-6 bg-white/5 border border-white/10 lg:bg-zinc-50 lg:border-zinc-100 rounded-3xl text-xs font-mono text-white lg:text-zinc-600 focus:outline-none focus:border-zinc-500 lg:focus:border-zinc-950 transition-colors"
                       />
                       <div className="flex justify-end gap-3">
                         <button 
                           onClick={() => setEditingPromptId(null)}
-                          className="px-6 py-3 border border-zinc-200 rounded-full text-[10px] uppercase tracking-widest font-black"
+                          className="px-6 py-3 border border-white/20 lg:border-zinc-200 rounded-full text-[10px] uppercase tracking-widest font-black text-white lg:text-zinc-900 hover:bg-white/10 lg:hover:bg-zinc-100 transition-colors"
                         >
                           {t.cancel}
                         </button>
                         <button 
                           onClick={() => handleUpdatePrompt(selectedEntry.id)}
-                          className="px-6 py-3 bg-black text-white rounded-full text-[10px] uppercase tracking-widest font-black"
+                          className="px-6 py-3 bg-white text-black lg:bg-black lg:text-white rounded-full text-[10px] uppercase tracking-widest font-black transition-colors"
                         >
                           {t.save}
                         </button>
                       </div>
                     </div>
                   ) : (
-                    <div className="p-6 bg-zinc-50 border border-zinc-100 rounded-2xl relative group/prompt overflow-hidden">
-                      <p className="text-[10px] text-zinc-500 leading-relaxed font-mono pr-8 transition-opacity duration-300 whitespace-pre-wrap">
+                    <div className="p-6 bg-white/5 border border-white/10 lg:bg-zinc-50 lg:border-zinc-100 rounded-2xl relative group/prompt overflow-hidden">
+                      <p className="text-[10px] text-zinc-300 lg:text-zinc-500 leading-relaxed font-mono pr-8 transition-opacity duration-300 whitespace-pre-wrap">
                         {showTranslated ? translatedPrompt : (selectedEntry.prompt || t.originalPrompt)}
                       </p>
                       <button 
                         onClick={() => copyToClipboard(showTranslated ? (translatedPrompt || '') : (selectedEntry.prompt || t.originalPrompt))}
-                        className="absolute top-4 right-4 p-2 bg-white border border-zinc-100 rounded-lg text-zinc-400 hover:text-zinc-900 transition-all opacity-0 group-hover/prompt:opacity-100"
+                        className="absolute top-4 right-4 p-2 bg-black/40 border border-white/10 rounded-lg text-zinc-300 hover:text-white transition-all opacity-0 group-hover/prompt:opacity-100 lg:bg-white lg:border-zinc-100 lg:text-zinc-400 lg:hover:text-zinc-900"
                       >
                         {copiedPrompt === (showTranslated ? translatedPrompt : (selectedEntry.prompt || t.originalPrompt)) ? <Check size={12} className="text-green-500" /> : <Copy size={12} />}
                       </button>
@@ -1716,21 +1832,21 @@ export default function App() {
                       <button
                         onClick={handleToggleTranslation}
                         disabled={isTranslating}
-                        className="mt-6 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-zinc-900 transition-all disabled:opacity-50"
+                        className="mt-6 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-zinc-200 lg:hover:text-zinc-900 transition-all disabled:opacity-50"
                       >
                         <div className={`flex items-center justify-center transition-transform duration-500 ${isTranslating ? 'animate-spin' : ''}`}>
                           <Languages size={12} />
                         </div>
                         {isTranslating ? t.translating : showTranslated ? t.showOriginal : t.showTranslation}
-                        <div className={`w-1 h-1 rounded-full ${showTranslated ? 'bg-zinc-900' : 'bg-zinc-200'} transition-colors`} />
+                        <div className={`w-1 h-1 rounded-full ${showTranslated ? 'bg-white lg:bg-zinc-900' : 'bg-zinc-700 lg:bg-zinc-200'} transition-colors`} />
                       </button>
                     </div>
                   )}
                 </div>
 
                 {/* Swapped: Download Section now here */}
-                <div className="mb-12 pt-8 border-t border-zinc-100">
-                  <div className="flex items-center gap-3 mb-6 text-zinc-900">
+                <div className="mb-12 pt-8 border-t border-white/10 lg:border-t lg:border-zinc-100">
+                  <div className="flex items-center gap-3 mb-6 text-white lg:text-zinc-900">
                     <Download size={16} />
                     <span className="text-[11px] uppercase tracking-[0.4em] font-bold">{t.downloadHighRes}</span>
                   </div>
@@ -1742,12 +1858,12 @@ export default function App() {
                         onClick={() => handleDownload(res)}
                         className={`py-4 border rounded-2xl flex flex-col items-center justify-center gap-2 transition-all relative overflow-hidden group ${
                           downloading === res 
-                            ? 'bg-zinc-900 text-white' 
-                            : 'bg-white border-zinc-200 hover:border-zinc-900'
+                            ? 'bg-zinc-900 text-white lg:bg-zinc-900 lg:text-white' 
+                            : 'bg-white/5 border-white/10 hover:border-white/35 text-white lg:bg-white lg:border-zinc-200 lg:hover:border-zinc-900 lg:text-zinc-900'
                         }`}
                       >
                         <span className="text-sm font-bold">{res}</span>
-                        <span className="text-[8px] uppercase tracking-tighter text-zinc-400 group-hover:text-zinc-600">
+                        <span className="text-[8px] uppercase tracking-tighter text-zinc-400 group-hover:text-zinc-300 lg:group-hover:text-zinc-600">
                           {res === '1K' ? '1280px' : res === '2K' ? '2560px' : res === '4K' ? '3840px' : '7680px'}
                         </span>
                         {downloading === res && (
@@ -1764,14 +1880,14 @@ export default function App() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 mb-12">
-                  <div className="p-4 bg-zinc-50 border border-zinc-100 rounded-2xl flex flex-col gap-1">
+                  <div className="p-4 bg-white/5 border border-white/10 lg:bg-zinc-50 lg:border-zinc-100 rounded-2xl flex flex-col gap-1">
                     <span className="text-[9px] uppercase tracking-widest text-zinc-400 font-bold">{t.model}</span>
-                    <span className="text-[11px] font-mono font-medium text-zinc-900">Gemini 1.5 Pro</span>
+                    <span className="text-[11px] font-mono font-medium text-zinc-200 lg:text-zinc-900">Gemini 1.5 Pro</span>
                   </div>
-                  <div className="p-4 bg-zinc-50 border border-zinc-100 rounded-2xl flex flex-col gap-1">
+                  <div className="p-4 bg-white/5 border border-white/10 lg:bg-zinc-50 lg:border-zinc-100 rounded-2xl flex flex-col gap-1">
                     <span className="text-[9px] uppercase tracking-widest text-zinc-400 font-bold">{t.generated}</span>
-                    <span className="text-[11px] font-mono font-medium text-zinc-900">
-                      {new Date(selectedEntry.timestamp).toLocaleTimeString(currentLang.code === 'TR' ? 'tr-TR' : 'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    <span className="text-[11px] font-mono font-medium text-zinc-200 lg:text-zinc-900">
+                      {new Date(selectedEntry.timestamp).toLocaleTimeString(currentLang.code === 'TR' ? 'tr-TR' : 'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Europe/Istanbul' })}
                     </span>
                   </div>
                 </div>
@@ -1779,43 +1895,43 @@ export default function App() {
                 <div className="mb-12">
                     <div className="flex items-center gap-3 mb-6">
                         <Camera size={14} className="text-zinc-400" />
-                        <h4 className="text-[11px] uppercase tracking-[0.3em] font-bold">{t.metadata}</h4>
+                        <h4 className="text-[11px] uppercase tracking-[0.3em] font-bold text-white lg:text-zinc-900">{t.metadata}</h4>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
-                        <div className="px-4 py-3 bg-zinc-50 rounded-xl border border-zinc-100 italic">
+                        <div className="px-4 py-3 bg-white/5 rounded-xl border border-white/10 italic lg:bg-zinc-50 lg:border-zinc-100">
                             <span className="text-[8px] uppercase tracking-widest text-zinc-400 block mb-1">85mm</span>
-                            <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">F/1.2 LENS</span>
+                            <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-tighter lg:text-zinc-600">F/1.2 LENS</span>
                         </div>
-                        <div className="px-4 py-3 bg-zinc-50 rounded-xl border border-zinc-100 italic">
+                        <div className="px-4 py-3 bg-white/5 rounded-xl border border-white/10 italic lg:bg-zinc-50 lg:border-zinc-100">
                             <span className="text-[8px] uppercase tracking-widest text-zinc-400 block mb-1">ISO 100</span>
-                            <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">1/250s EXP</span>
+                            <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-tighter lg:text-zinc-600">1/250s EXP</span>
                         </div>
-                        <div className="px-4 py-3 bg-zinc-50 rounded-xl border border-zinc-100 italic">
+                        <div className="px-4 py-3 bg-white/5 rounded-xl border border-white/10 italic lg:bg-zinc-50 lg:border-zinc-100">
                             <span className="text-[8px] uppercase tracking-widest text-zinc-400 block mb-1">SENSOR</span>
-                            <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Full Frame 3:2</span>
+                            <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-tighter lg:text-zinc-600">Full Frame 3:2</span>
                         </div>
-                        <div className="px-4 py-3 bg-zinc-50 rounded-xl border border-zinc-100 italic">
+                        <div className="px-4 py-3 bg-white/5 rounded-xl border border-white/10 italic lg:bg-zinc-50 lg:border-zinc-100">
                             <span className="text-[8px] uppercase tracking-widest text-zinc-400 block mb-1">DYNAMICS</span>
-                            <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">14-Bit RAW</span>
+                            <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-tighter lg:text-zinc-600">14-Bit RAW</span>
                         </div>
-                        <div className="px-4 py-3 bg-zinc-50 rounded-xl border border-zinc-100 italic">
+                        <div className="px-4 py-3 bg-white/5 rounded-xl border border-white/10 italic lg:bg-zinc-50 lg:border-zinc-100">
                             <span className="text-[8px] uppercase tracking-widest text-zinc-400 block mb-1">FOCUS</span>
-                            <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Eye-AF Phase</span>
+                            <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-tighter lg:text-zinc-600">Eye-AF Phase</span>
                         </div>
-                        <div className="px-4 py-3 bg-zinc-50 rounded-xl border border-zinc-100 italic">
+                        <div className="px-4 py-3 bg-white/5 rounded-xl border border-white/10 italic lg:bg-zinc-50 lg:border-zinc-100">
                             <span className="text-[8px] uppercase tracking-widest text-zinc-400 block mb-1">COLORSPACE</span>
-                            <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">BT.2020 WCG</span>
+                            <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-tighter lg:text-zinc-600">BT.2020 WCG</span>
                         </div>
-                        <div className="px-4 py-3 bg-zinc-50 rounded-xl border border-zinc-100 italic">
+                        <div className="px-4 py-3 bg-white/5 rounded-xl border border-white/10 italic lg:bg-zinc-50 lg:border-zinc-100">
                             <span className="text-[8px] uppercase tracking-widest text-zinc-400 block mb-1">SHARPNESS</span>
-                            <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">Ultra-HD AI</span>
+                            <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-tighter lg:text-zinc-600">Ultra-HD AI</span>
                         </div>
-                        <div className="px-4 py-3 bg-zinc-50 rounded-xl border border-zinc-100 italic">
+                        <div className="px-4 py-3 bg-white/5 rounded-xl border border-white/10 italic lg:bg-zinc-50 lg:border-zinc-100">
                             <span className="text-[8px] uppercase tracking-widest text-zinc-400 block mb-1">BIT DEPTH</span>
-                            <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-tighter">32-Bit Float</span>
+                            <span className="text-[10px] font-bold text-zinc-300 uppercase tracking-tighter lg:text-zinc-600">32-Bit Float</span>
                         </div>
                         {selectedEntry.model && (
-                            <div className="col-span-2 px-4 py-3 bg-zinc-900 text-white rounded-xl border border-zinc-800 italic flex items-center justify-between">
+                            <div className="col-span-2 px-4 py-3 bg-white/10 text-white rounded-xl border border-white/10 italic flex items-center justify-between lg:bg-zinc-900 lg:border-zinc-800">
                                 <div>
                                     <span className="text-[8px] uppercase tracking-widest text-zinc-400 block mb-1">{t.aiModel}</span>
                                     <span className="text-[10px] font-bold uppercase tracking-tighter">{selectedEntry.model}</span>
@@ -1827,14 +1943,14 @@ export default function App() {
                 </div>
 
                 {userRole === 'admin' && (
-                  <div className="mt-12 pt-8 border-t border-zinc-100 flex flex-col gap-4">
-                     <div className="flex items-center gap-3 mb-2 text-red-500">
+                  <div className="mt-12 pt-8 border-t border-white/10 flex flex-col gap-4 lg:border-zinc-100">
+                     <div className="flex items-center gap-3 mb-2 text-red-400 lg:text-red-500">
                         <Trash size={16} />
                         <span className="text-[11px] uppercase tracking-[0.4em] font-bold">{t.adminActions}</span>
                      </div>
                      <button 
                        onClick={(e) => handleDelete(selectedEntry.id, e)}
-                       className="w-full py-4 bg-red-50 text-red-600 border border-red-100 rounded-2xl text-[10px] uppercase tracking-widest font-black hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                       className="w-full py-4 bg-red-950/20 text-red-400 border border-red-900/40 rounded-2xl text-[10px] uppercase tracking-widest font-black hover:bg-red-500 hover:text-white transition-all shadow-sm lg:bg-red-50 lg:text-red-600 lg:border-red-100"
                      >
                        {t.deleteEntryAction}
                      </button>
@@ -1989,7 +2105,7 @@ export default function App() {
               <div className="hidden lg:flex items-center gap-2 text-red-600 animate-pulse bg-red-50 px-4 py-2 rounded-full border border-red-200">
                 <span className="text-[10px] font-bold uppercase tracking-widest">
                   {cooldownUntil 
-                    ? `${t.quotaLimit} (${t.reset}: ${new Date(cooldownUntil).toLocaleTimeString(currentLang.code === 'TR' ? 'tr-TR' : 'en-US', { hour: '2-digit', minute: '2-digit' })})` 
+                    ? `${t.quotaLimit} (${t.reset}: ${new Date(cooldownUntil).toLocaleTimeString(currentLang.code === 'TR' ? 'tr-TR' : 'en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' })})` 
                     : t.quotaReached}
                 </span>
               </div>
@@ -2043,7 +2159,7 @@ export default function App() {
                 </h1>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-12">
                   <p className="text-zinc-400 uppercase tracking-[0.4em] text-[11px] font-medium">
-                    {t.hourlyEditorial} · {new Date().toLocaleDateString(currentLang.code === 'TR' ? 'tr-TR' : 'en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                    {t.hourlyEditorial} · {new Date().toLocaleDateString(currentLang.code === 'TR' ? 'tr-TR' : 'en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Europe/Istanbul' })}
                   </p>
                   <div className="h-[1px] w-24 bg-zinc-200 hidden sm:block" />
                   <p className="text-zinc-400 uppercase tracking-[0.2em] text-[10px]">
@@ -2184,7 +2300,7 @@ export default function App() {
                           
                           <div className="absolute top-10 right-10 flex flex-col items-end gap-2">
                              <div className="bg-black/80 backdrop-blur-xl px-8 py-4 rounded-3xl border border-white/10 text-white text-[12px] uppercase tracking-[0.2em] font-mono shadow-2xl">
-                               {new Date(todayEntries[0].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                               {new Date(todayEntries[0].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' })}
                              </div>
                           </div>
                           <div className="absolute bottom-10 right-10 flex items-center gap-6 animate-in fade-in slide-in-from-right duration-1000 delay-500 opacity-0 group-hover:opacity-100 lg:opacity-100 transition-opacity">
@@ -2210,7 +2326,7 @@ export default function App() {
                                <div className="w-1.5 h-1.5 rounded-full bg-zinc-900 animate-pulse" />
                                <span className="text-[11px] uppercase tracking-[0.6em] font-black text-zinc-400">01 — {t.currentEditorial}</span>
                             </div>
-                            <h2 className="text-[2.5rem] md:text-[5rem] font-black uppercase tracking-tighter leading-[0.8] text-zinc-900 selection:bg-zinc-900 selection:text-white transition-all duration-700">
+                            <h2 className="text-[1.25rem] md:text-[2.5rem] font-black uppercase tracking-tighter leading-[0.8] text-zinc-900 selection:bg-zinc-900 selection:text-white transition-all duration-700">
                               {todayEntries[0].location}
                             </h2>
                             <div className="flex flex-nowrap overflow-x-auto scrollbar-hide gap-3 justify-center lg:justify-start pt-2">
@@ -2290,7 +2406,7 @@ export default function App() {
                                       </div>
                                       <div className="text-right">
                                          <span className="text-[9px] uppercase tracking-[0.3em] text-zinc-300 block mb-1">{t.time}</span>
-                                         <span className="text-[10px] font-mono font-medium text-white">{new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                         <span className="text-[10px] font-mono font-medium text-white">{new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' })}</span>
                                       </div>
                                     </div>
                                   </div>
@@ -2410,37 +2526,97 @@ export default function App() {
               </div>
             </div>
 
-            {/* Date Picker / Carousel */}
+            {/* Date Picker / Dropdowns (Year -> Month -> Day) */}
             {!isSelectionMode && allDates.length > 0 && (
-              <div className="mb-16">
-                <div className="flex items-center gap-4 mb-8">
+              <div className="mb-16 bg-zinc-50/50 border border-zinc-100 p-6 md:p-8 rounded-3xl">
+                <div className="flex items-center gap-4 mb-6">
                   <Clock size={14} className="text-zinc-400" />
-                  <span className="text-[10px] uppercase tracking-[0.4em] font-bold text-zinc-400">Tarih Seçimi</span>
+                  <span className="text-[10px] uppercase tracking-[0.4em] font-bold text-zinc-400">
+                    {currentLang.code === 'TR' ? 'FİLTRELEMELİ TARİH SEÇİMİ' : 'FILTERED DATE SELECTION'}
+                  </span>
                 </div>
-                <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
-                  <button 
-                    onClick={() => setSelectedArchiveDate(null)}
-                    className={`flex-shrink-0 px-8 py-4 rounded-2xl text-[10px] font-bold uppercase tracking-widest transition-all border ${
-                      selectedArchiveDate === null 
-                        ? 'bg-zinc-900 text-white border-zinc-900 shadow-xl' 
-                        : 'bg-white text-zinc-500 border-zinc-100 hover:border-zinc-200'
-                    }`}
-                  >
-                    Hepsi
-                  </button>
-                  {allDates.map(date => (
-                    <button 
-                      key={date}
-                      onClick={() => setSelectedArchiveDate(date)}
-                      className={`flex-shrink-0 px-8 py-4 rounded-2xl text-[10px] font-bold uppercase tracking-widest transition-all border ${
-                        selectedArchiveDate === date 
-                          ? 'bg-zinc-900 text-white border-zinc-900 shadow-xl' 
-                          : 'bg-white text-zinc-500 border-zinc-100 hover:border-zinc-200'
-                      }`}
+                
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end">
+                  {/* Year Select */}
+                  <div className="flex flex-col gap-2">
+                    <label className="text-[9px] uppercase tracking-[0.2em] font-bold text-zinc-400 pl-1">
+                      {currentLang.code === 'TR' ? 'YIL SEÇİNİZ' : 'SELECT YEAR'}
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={selectedArchiveYear}
+                        onChange={(e) => handleYearChange(e.target.value)}
+                        className="w-full bg-white border border-zinc-200 text-zinc-800 text-xs px-4 py-3.5 rounded-xl focus:ring-1 focus:ring-zinc-900 focus:border-zinc-900 focus:outline-none transition-all uppercase tracking-wider font-semibold hover:border-zinc-300 cursor-pointer appearance-none pr-10"
+                      >
+                        <option value="all">{currentLang.code === 'TR' ? 'TÜM YILLAR' : 'ALL YEARS'}</option>
+                        {availableYears.map(year => (
+                          <option key={year} value={year}>{year}</option>
+                        ))}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  {/* Month Select */}
+                  <div className="flex flex-col gap-2">
+                    <label className="text-[9px] uppercase tracking-[0.2em] font-bold text-zinc-400 pl-1">
+                      {currentLang.code === 'TR' ? 'AY SEÇİNİZ' : 'SELECT MONTH'}
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={selectedArchiveMonth}
+                        disabled={selectedArchiveYear === 'all'}
+                        onChange={(e) => handleMonthChange(e.target.value)}
+                        className="w-full bg-white border border-zinc-200 text-zinc-800 text-xs px-4 py-3.5 rounded-xl focus:ring-1 focus:ring-zinc-900 focus:border-zinc-900 focus:outline-none transition-all uppercase tracking-wider font-semibold hover:border-zinc-300 disabled:opacity-50 disabled:bg-zinc-100 disabled:cursor-not-allowed cursor-pointer appearance-none pr-10"
+                      >
+                        <option value="all">{currentLang.code === 'TR' ? 'TÜM AYLAR' : 'ALL MONTHS'}</option>
+                        {availableMonths.map(month => (
+                          <option key={month} value={month}>
+                            {getMonthName(month, currentLang.code)}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  {/* Day Select */}
+                  <div className="flex flex-col gap-2">
+                    <label className="text-[9px] uppercase tracking-[0.2em] font-bold text-zinc-400 pl-1">
+                      {currentLang.code === 'TR' ? 'GÜN SEÇİNİZ' : 'SELECT DAY'}
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={selectedArchiveDay}
+                        disabled={selectedArchiveMonth === 'all' || selectedArchiveYear === 'all'}
+                        onChange={(e) => handleDayChange(e.target.value)}
+                        className="w-full bg-white border border-zinc-200 text-zinc-800 text-xs px-4 py-3.5 rounded-xl focus:ring-1 focus:ring-zinc-900 focus:border-zinc-900 focus:outline-none transition-all uppercase tracking-wider font-semibold hover:border-zinc-300 disabled:opacity-50 disabled:bg-zinc-100 disabled:cursor-not-allowed cursor-pointer appearance-none pr-10"
+                      >
+                        <option value="all">{currentLang.code === 'TR' ? 'TÜM GÜNLER' : 'ALL DAYS'}</option>
+                        {availableDays.map(day => (
+                          <option key={day} value={day}>
+                            {getDayLabel(day)}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  {/* Reset Button */}
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={() => {
+                        setSelectedArchiveYear('all');
+                        setSelectedArchiveMonth('all');
+                        setSelectedArchiveDay('all');
+                      }}
+                      className="w-full h-[46px] bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-[10px] uppercase tracking-[0.2em] font-bold transition-all text-center flex items-center justify-center gap-2 shadow-sm"
                     >
-                      {new Date(date).toLocaleDateString(currentLang.code === 'TR' ? 'tr-TR' : 'en-US', { day: 'numeric', month: 'short' })}
+                      <RotateCcw size={12} />
+                      {currentLang.code === 'TR' ? 'TEMİZLE' : 'RESET'}
                     </button>
-                  ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -2450,17 +2626,22 @@ export default function App() {
                   <LayoutGrid size={40} className="mx-auto mb-6 text-zinc-300" />
                   <p className="text-zinc-400 uppercase tracking-[0.4em] text-xs font-medium">{t.archiveUpdateSoon}</p>
                 </div>
+            ) : filteredDates.length === 0 ? (
+                <div className="py-40 text-center border border-dashed border-zinc-200 opacity-50 rounded-3xl">
+                  <LayoutGrid size={40} className="mx-auto mb-6 text-zinc-300" />
+                  <p className="text-zinc-400 uppercase tracking-[0.4em] text-xs font-medium animate-pulse">
+                    {currentLang.code === 'TR' ? 'SEÇİLEN TARİHTE HERHANGİ BİR ÇEKİM BULUNAMADI' : 'NO CAPTURES FOUND FOR THE SELECTED DATE'}
+                  </p>
+                </div>
             ) : (
                 <div className="space-y-48">
-                  {allDates
-                    .filter(d => !selectedArchiveDate || d === selectedArchiveDate)
-                    .map(date => (
+                  {filteredDates.map(date => (
                     <div key={date} className="group/date">
                       <div className="flex flex-col md:flex-row md:items-center gap-6 mb-16 border-l-4 border-zinc-100 pl-8">
                         <div className="flex items-center gap-4">
                           <div className="w-2 h-2 rounded-full bg-zinc-900" />
                           <h3 className="text-4xl md:text-5xl font-black uppercase tracking-tighter text-zinc-900 ornament-text">
-                            {new Date(date).toLocaleDateString(currentLang.code === 'TR' ? 'tr-TR' : 'en-US', { month: 'long', day: 'numeric' })}
+                            {new Date(date).toLocaleDateString(currentLang.code === 'TR' ? 'tr-TR' : 'en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' })}
                           </h3>
                         </div>
                         <div className="h-px flex-grow bg-zinc-100 hidden md:block" />
@@ -2469,7 +2650,7 @@ export default function App() {
                         </span>
                       </div>
 
-                      <div className="flex gap-6 overflow-x-auto pb-12 scrollbar-hide snap-x snap-mandatory -mx-6 px-6">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-6 pb-12">
                         {visibleHistory[date].map((entry, idx) => (
                           <motion.div 
                             key={entry.id}
@@ -2479,7 +2660,7 @@ export default function App() {
                             viewport={{ once: true }}
                             transition={{ delay: (idx % 4) * 0.1 }}
                             onClick={() => isSelectionMode ? toggleSelection(entry.id) : setSelectedEntry(entry)}
-                            className={`group cursor-pointer relative flex-shrink-0 w-[180px] sm:w-[210px] snap-start ${isSelectionMode && selectedIds.has(entry.id) ? 'scale-[0.98]' : ''}`}
+                            className={`group cursor-pointer relative w-full ${isSelectionMode && selectedIds.has(entry.id) ? 'scale-[0.98]' : ''}`}
                           >
                             {isSelectionMode && (
                               <div className="absolute top-4 left-4 z-20">
@@ -2507,7 +2688,7 @@ export default function App() {
                                 loading="lazy"
                               />
                               <div className="absolute top-4 right-4 bg-black/40 backdrop-blur-md px-3 py-1 rounded-full text-white text-[9px] font-mono opacity-0 group-hover:opacity-100 transition-opacity">
-                                 {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                 {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' })}
                               </div>
                             </div>
                             <div className="flex justify-between items-center px-1">
@@ -2742,7 +2923,7 @@ export default function App() {
                                       {comment.authorRole === 'admin' && <Shield size={10} className="text-[#18eedc]" />}
                                     </div>
                                     <span className="text-[9px] font-mono font-bold text-zinc-300 uppercase tracking-widest">
-                                      {new Date(comment.timestamp).toLocaleDateString()} • {new Date(comment.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                      {new Date(comment.timestamp).toLocaleDateString(currentLang.code === 'TR' ? 'tr-TR' : 'en-US', { timeZone: 'Europe/Istanbul' })} • {new Date(comment.timestamp).toLocaleTimeString(currentLang.code === 'TR' ? 'tr-TR' : 'en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' })}
                                     </span>
                                   </div>
                                 </div>
@@ -2831,7 +3012,7 @@ export default function App() {
                                             {reply.authorRole === 'admin' && <Shield size={8} className="text-[#18eedc]" />}
                                           </div>
                                           <span className="text-[8px] font-mono font-bold text-zinc-300 uppercase tracking-widest">
-                                            {new Date(reply.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                            {new Date(reply.timestamp).toLocaleTimeString(currentLang.code === 'TR' ? 'tr-TR' : 'en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' })}
                                           </span>
                                         </div>
                                       </div>
@@ -3105,6 +3286,19 @@ export default function App() {
                 }`}
               >
                 {systemEnabled ? t.shutdownSystem : t.startupSystem}
+              </button>
+
+              <button 
+                onClick={() => checkAndGenerate(true)}
+                disabled={isGeneratingState}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full border text-[10px] font-bold uppercase tracking-widest transition-all ${
+                  isGeneratingState 
+                    ? 'bg-zinc-100 border-zinc-200 text-zinc-400 cursor-not-allowed'
+                    : 'bg-[#00e676] text-zinc-950 border-[#00e676] hover:bg-[#00c853] hover:border-[#00c853]'
+                }`}
+              >
+                <Sparkles size={12} className={isGeneratingState ? 'animate-spin' : ''} />
+                {isGeneratingState ? t.generating : t.generateNow}
               </button>
             </div>
           </div>
