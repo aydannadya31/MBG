@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { db, handleFirestoreError, OperationType } from "./firebase";
+import { getActiveDb, handleFirestoreError, OperationType } from "./firebase";
 import { collection, addDoc } from "firebase/firestore";
 
 const PRIMARY_IMAGE_MODEL = "gemini-2.5-flash-image";
@@ -382,7 +382,7 @@ export async function generateNewPiece(langCode: string = 'TR', forcedTimestamp?
 
       // 4. Persist to Firestore
       try {
-        const docRef = await addDoc(collection(db, "entries"), piece);
+        const docRef = await addDoc(collection(getActiveDb(), "entries"), piece);
         return { ...piece, id: docRef.id };
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, "entries");

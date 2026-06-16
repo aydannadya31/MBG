@@ -41,11 +41,11 @@ export function markCurrentDbExhausted(): void {
   }
 }
 
-export const db = new Proxy({} as Firestore, {
-  get(_, prop: string | symbol) {
-    return (getActiveDbInstance() as any)[prop];
-  },
-});
+export function getActiveDb(): Firestore {
+  return getActiveDbInstance();
+}
+
+export const db: Firestore = getActiveDbInstance();
 
 export const auth = getAuth();
 export const googleProvider = new GoogleAuthProvider();

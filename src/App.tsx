@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LayoutGrid, Clock, ChevronRight, Sparkles, Languages, ChevronDown, X, Download, Terminal, Copy, Check, ZoomIn, ZoomOut, RotateCcw, RotateCw, Move, ThumbsUp, ThumbsDown, Diamond, Trash2, Edit3, Shield, User, Trash, MessageSquare, Send, MessageCircle, Camera } from 'lucide-react';
 import { query, collection, where, orderBy, onSnapshot, limit, updateDoc, doc, increment, deleteDoc, addDoc } from 'firebase/firestore';
-import { db, OperationType, handleFirestoreError, markCurrentDbExhausted, auth, googleProvider, signInWithPopup } from './services/firebase';
+import { getActiveDb, OperationType, handleFirestoreError, markCurrentDbExhausted, auth, googleProvider, signInWithPopup } from './services/firebase';
 import { generateNewPiece } from './services/gemini';
 import { sendMessage, translateToTurkish, Message } from './services/chatService';
 import { ContentEntry } from './types';
@@ -878,7 +878,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    const q = query(collection(db, 'comments'), orderBy('timestamp', 'desc'));
+    const q = query(collection(getActiveDb(), 'comments'), orderBy('timestamp', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setComments(docs);
@@ -905,13 +905,13 @@ export default function App() {
 
     try {
       if (editingComment) {
-        await updateDoc(doc(db, 'comments', editingComment.id), {
+        await updateDoc(doc(getActiveDb(), 'comments', editingComment.id), {
           content: commentText,
           updatedAt: Date.now()
         });
         setEditingComment(null);
       } else {
-        await addDoc(collection(db, 'comments'), {
+        await addDoc(collection(getActiveDb(), 'comments'), {
           authorName: commentUserRole === 'admin' ? 'Yönetici' : (commentAuthInput.username || 'Kullanıcı'),
           authorRole: commentUserRole,
           content: commentText,
@@ -933,7 +933,7 @@ export default function App() {
       e.stopPropagation();
     }
     try {
-      await updateDoc(doc(db, 'comments', id), { isHidden: !currentHidden });
+      await updateDoc(doc(getActiveDb(), 'comments', id), { isHidden: !currentHidden });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `comments/${id}`);
     }
@@ -947,7 +947,7 @@ export default function App() {
 
     try {
       console.log("Başlatılıyor: Silme İşlemi", commentId);
-      const docRef = doc(db, 'comments', commentId);
+      const docRef = doc(getActiveDb(), 'comments', commentId);
       await deleteDoc(docRef);
       console.log("Başarılı: Silme İşlemi", commentId);
       setCommentDeletingId(null);
@@ -973,7 +973,7 @@ export default function App() {
     
     try {
       console.log("Proceeding with deletion of:", id);
-      const docRef = doc(db, 'entries', id);
+      const docRef = doc(getActiveDb(), 'entries', id);
       await deleteDoc(docRef);
       
       console.log("Deletion successful for:", id);
@@ -1002,7 +1002,7 @@ export default function App() {
     
     try {
       console.log("Starting bulk delete for IDs:", idsToDelete);
-      const batch = idsToDelete.map(id => deleteDoc(doc(db, 'entries', id)));
+      const batch = idsToDelete.map(id => deleteDoc(doc(getActiveDb(), 'entries', id)));
       await Promise.all(batch);
       
       console.log("Bulk delete successful");
@@ -1029,7 +1029,7 @@ export default function App() {
 
   const handleUpdatePrompt = async (id: string) => {
     try {
-      await updateDoc(doc(db, 'entries', id), { prompt: editPromptValue });
+      await updateDoc(doc(getActiveDb(), 'entries', id), { prompt: editPromptValue });
       setEditingPromptId(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `entries/${id}`);
@@ -1064,7 +1064,7 @@ export default function App() {
     if (userFeedback[entryId]) return;
 
     try {
-      const entryRef = doc(db, "entries", entryId);
+      const entryRef = doc(getActiveDb(), "entries", entryId);
       await updateDoc(entryRef, {
         [type === 'like' ? 'likes' : 'dislikes']: increment(1)
       });
@@ -1169,7 +1169,7 @@ export default function App() {
   useEffect(() => {
     // We use a simpler query to avoid composite index requirements
     const q = query(
-      collection(db, 'entries'),
+      collection(getActiveDb(), 'entries'),
       orderBy('timestamp', 'desc'),
       limit(100)
     );
