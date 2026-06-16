@@ -1,10 +1,52 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+import { getFirestore, Firestore, doc, getDocFromServer } from 'firebase/firestore';
+import allConfigs from '../../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const EXHAUSTED_PREFIX = 'firestore_exhausted_';
+const QUOTA_RESET_MS = 24 * 60 * 60 * 1000;
+
+const apps: FirebaseApp[] = [];
+const instances: Firestore[] = [];
+
+allConfigs.forEach((config, i) => {
+  const app = initializeApp(config, i === 0 ? undefined : `fb-${i}`);
+  apps.push(app);
+  instances.push(getFirestore(app, config.firestoreDatabaseId));
+});
+
+function getActiveDbIndex(): number {
+  for (let i = 0; i < instances.length; i++) {
+    try {
+      const exhaustedAt = parseInt(localStorage.getItem(`${EXHAUSTED_PREFIX}${i}`) || '0', 10);
+      if (Date.now() - exhaustedAt > QUOTA_RESET_MS) {
+        return i;
+      }
+    } catch (_) {
+    }
+  }
+  return 0;
+}
+
+function getActiveDbInstance(): Firestore {
+  return instances[getActiveDbIndex()];
+}
+
+export function markCurrentDbExhausted(): void {
+  try {
+    const idx = getActiveDbIndex();
+    localStorage.setItem(`${EXHAUSTED_PREFIX}${idx}`, Date.now().toString());
+    window.dispatchEvent(new CustomEvent('firestore-db-switched'));
+  } catch (_) {
+  }
+}
+
+export const db = new Proxy({} as Firestore, {
+  get(_, prop: string | symbol) {
+    return (getActiveDbInstance() as any)[prop];
+  },
+});
+
 export const auth = getAuth();
 export const googleProvider = new GoogleAuthProvider();
 
@@ -44,10 +86,14 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
+
+  if (error instanceof Error && (error.message.includes('quota') || error.message.includes('RESOURCE_EXHAUSTED'))) {
+    markCurrentDbExhausted();
+  }
+
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Test connection
 async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));

@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LayoutGrid, Clock, ChevronRight, Sparkles, Languages, ChevronDown, X, Download, Terminal, Copy, Check, ZoomIn, ZoomOut, RotateCcw, RotateCw, Move, ThumbsUp, ThumbsDown, Diamond, Trash2, Edit3, Shield, User, Trash, MessageSquare, Send, MessageCircle, Camera } from 'lucide-react';
 import { query, collection, where, orderBy, onSnapshot, limit, updateDoc, doc, increment, deleteDoc, addDoc } from 'firebase/firestore';
-import { db, OperationType, handleFirestoreError, auth, googleProvider, signInWithPopup } from './services/firebase';
+import { db, OperationType, handleFirestoreError, markCurrentDbExhausted, auth, googleProvider, signInWithPopup } from './services/firebase';
 import { generateNewPiece } from './services/gemini';
 import { sendMessage, translateToTurkish, Message } from './services/chatService';
 import { ContentEntry } from './types';
@@ -629,6 +629,7 @@ export default function App() {
   });
 
   const [notification, setNotification] = useState<string | null>(null);
+  const [dbVersion, setDbVersion] = useState(0);
 
   const toggleSystem = () => {
     if (systemEnabled) {
@@ -670,6 +671,12 @@ export default function App() {
       return () => clearTimeout(t);
     }
   }, [notification]);
+
+  useEffect(() => {
+    const handler = () => setDbVersion(v => v + 1);
+    window.addEventListener('firestore-db-switched', handler);
+    return () => window.removeEventListener('firestore-db-switched', handler);
+  }, []);
 
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [currentLang, setCurrentLang] = useState(LANGUAGES[0]);
@@ -879,7 +886,7 @@ export default function App() {
       handleFirestoreError(err, OperationType.LIST, 'comments');
     });
     return () => unsubscribe();
-  }, []);
+  }, [dbVersion]);
 
   const handleGoogleLogin = async () => {
     try {
@@ -1187,14 +1194,17 @@ export default function App() {
       
       setLoading(false);
     }, (error) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+        markCurrentDbExhausted();
+      }
       console.warn("Firestore collection load failed or empty. Sourcing curated archive assets locally.", error);
-      // Fallback to local curated assets if Firestore fails (offline, unprovisioned snapshot or permission unpropagated)
       setEntries(getFallbackEntries());
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [currentDateKey]);
+  }, [currentDateKey, dbVersion]);
 
   // Logic for autonomous generation and timing synchronization
   const checkAndGenerate = async (force = false) => {
