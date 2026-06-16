@@ -2,6 +2,33 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { db, handleFirestoreError, OperationType } from "./firebase";
 import { collection, addDoc } from "firebase/firestore";
 
+const PRIMARY_IMAGE_MODEL = "gemini-2.5-flash-image";
+const FALLBACK_IMAGE_MODEL = "gemini-2.0-flash-exp-image-generation";
+const PRIMARY_MODEL_LABEL = "Gemini 2.5 Flash Image";
+const FALLBACK_MODEL_LABEL = "Gemini 2.0 Flash Exp Image";
+const QUOTA_RESET_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function getActiveImageModel(): string {
+  try {
+    const stored = localStorage.getItem("mbg_image_model");
+    if (stored === FALLBACK_IMAGE_MODEL) {
+      const fallbackTime = parseInt(localStorage.getItem("mbg_fallback_timestamp") || "0", 10);
+      if (Date.now() - fallbackTime > QUOTA_RESET_INTERVAL_MS) {
+        localStorage.setItem("mbg_image_model", PRIMARY_IMAGE_MODEL);
+        localStorage.removeItem("mbg_fallback_timestamp");
+        return PRIMARY_IMAGE_MODEL;
+      }
+      return FALLBACK_IMAGE_MODEL;
+    }
+  } catch (_) {
+  }
+  return PRIMARY_IMAGE_MODEL;
+}
+
+function getImageModelLabel(modelName: string): string {
+  return modelName === PRIMARY_IMAGE_MODEL ? PRIMARY_MODEL_LABEL : FALLBACK_MODEL_LABEL;
+}
+
 let aiInstance: GoogleGenAI | null = null;
 
 function getAI() {
@@ -293,8 +320,9 @@ export async function generateNewPiece(langCode: string = 'TR', forcedTimestamp?
       }
 
       // 2. Generate high-quality image using the ENGLISH prompt
+      const currentImageModel = getActiveImageModel();
       const imageResponse = await ai.models.generateContent({
-        model: "gemini-2.5-flash-image",
+        model: currentImageModel,
         contents: {
           parts: [
             { text: `${content.imagePrompt}. High-end commercial production, FEMALE MODEL ONLY, vibrant color palette, ultra-sharp focus, editorial look.` }
@@ -348,7 +376,7 @@ export async function generateNewPiece(langCode: string = 'TR', forcedTimestamp?
         location: `${selectedEnv} (${selectedOutfit.category})`,
         prompt: content.imagePrompt,
         description: content.displayDescription,
-        model: "Gemini 2.5 Flash Image",
+        model: getImageModelLabel(currentImageModel),
         isExample: true
       };
 
@@ -364,8 +392,14 @@ export async function generateNewPiece(langCode: string = 'TR', forcedTimestamp?
     } catch (error: any) {
       const errorMsg = error?.message || JSON.stringify(error);
       
-      // If it's a quota error, we should NOT retry internally, but propagate it so the UI handles it
       if (errorMsg.includes("RESOURCE_EXHAUSTED") || errorMsg.includes("429")) {
+        if (currentImageModel === PRIMARY_IMAGE_MODEL) {
+          try {
+            localStorage.setItem("mbg_image_model", FALLBACK_IMAGE_MODEL);
+            localStorage.setItem("mbg_fallback_timestamp", Date.now().toString());
+          } catch (_) {
+          }
+        }
         throw error;
       }
 
