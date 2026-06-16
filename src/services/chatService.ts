@@ -53,7 +53,7 @@ export async function sendMessage(history: Message[], currentMessage: string, la
   const langContext = langCode === 'TR' ? 'Turkish' : langCode === 'EN' ? 'English' : langCode === 'FR' ? 'French' : langCode === 'IT' ? 'Italian' : langCode === 'ES' ? 'Spanish' : langCode === 'DE' ? 'German' : langCode === 'RU' ? 'Russian' : 'English';
 
   const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-2.0-flash",
     contents: [
       ...history.map(msg => ({
         role: msg.role,
@@ -76,7 +76,7 @@ export async function translateToTurkish(text: string): Promise<string> {
   }
 
   const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-2.0-flash",
     contents: [{ 
       role: 'user', 
       parts: [{ text: `Translate the following high-fashion editorial description into sophisticated, professional Turkish fashion terminology. Keep it poetic and elegant. DO NOT add any explanations, only return the translation: "${text}"` }] 
