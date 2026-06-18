@@ -199,6 +199,7 @@ export async function generateNewPiece(langCode: string = 'TR', forcedTimestamp?
 
   while (attempts < maxAttempts) {
     attempts++;
+    let currentImageModel = "";
     try {
       let selectedModelType = "";
       try {
@@ -320,7 +321,7 @@ export async function generateNewPiece(langCode: string = 'TR', forcedTimestamp?
       }
 
       // 2. Generate high-quality image using the ENGLISH prompt
-      const currentImageModel = getActiveImageModel();
+      currentImageModel = getActiveImageModel();
       const imageResponse = await ai.models.generateContent({
         model: currentImageModel,
         contents: {
