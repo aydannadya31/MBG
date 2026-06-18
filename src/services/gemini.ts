@@ -29,11 +29,18 @@ function getImageModelLabel(modelName: string): string {
   return modelName === PRIMARY_IMAGE_MODEL ? PRIMARY_MODEL_LABEL : FALLBACK_MODEL_LABEL;
 }
 
+const API_KEYS = [
+  process.env.GEMINI_API_KEY,
+  process.env.GEMINI_API_KEY2,
+  process.env.GEMINI_API_KEY3,
+].filter((k): k is string => typeof k === "string" && k.length > 0);
+
 let aiInstance: GoogleGenAI | null = null;
+let currentKeyIndex = 0;
 
 function getAI() {
   if (!aiInstance) {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = API_KEYS[currentKeyIndex];
     if (!apiKey) {
       console.warn("GEMINI_API_KEY is not defined. AI generation will not work.");
       aiInstance = new GoogleGenAI({ apiKey: "MISSING_KEY" });
@@ -42,6 +49,16 @@ function getAI() {
     }
   }
   return aiInstance;
+}
+
+/** Rotate to the next API key on 429. Returns false if no more keys to try. */
+function rotateApiKey(): boolean {
+  if (API_KEYS.length <= 1) return false;
+  const nextIndex = (currentKeyIndex + 1) % API_KEYS.length;
+  if (nextIndex <= currentKeyIndex) return false; // wrapped around — all keys exhausted
+  currentKeyIndex = nextIndex;
+  aiInstance = null; // force recreation on next getAI() call
+  return true;
 }
 
 const STANDARD_MODEL_TYPES = [
@@ -181,8 +198,7 @@ const ALLOWED_FABRICS = [
 ];
 
 export async function generateNewPiece(langCode: string = 'TR', forcedTimestamp?: number): Promise<any> {
-  const ai = getAI();
-  if (process.env.GEMINI_API_KEY === undefined || process.env.GEMINI_API_KEY === "") {
+  if (API_KEYS.length === 0) {
     throw new Error("GEMINI_API_KEY eksik. Lütfen ayarlardan API anahtarınızı ekleyin.");
   }
 
@@ -201,6 +217,7 @@ export async function generateNewPiece(langCode: string = 'TR', forcedTimestamp?
     attempts++;
     let currentImageModel = "";
     try {
+      const ai = getAI();
       let selectedModelType = "";
       try {
         const lastIndexStr = localStorage.getItem("high_fashion_last_model_index");
@@ -394,6 +411,10 @@ export async function generateNewPiece(langCode: string = 'TR', forcedTimestamp?
       const errorMsg = error?.message || JSON.stringify(error);
       
       if (errorMsg.includes("RESOURCE_EXHAUSTED") || errorMsg.includes("429")) {
+        if (rotateApiKey()) {
+          console.log(`429 - rotating API key to #${currentKeyIndex + 1}`);
+          continue;
+        }
         if (currentImageModel === PRIMARY_IMAGE_MODEL) {
           try {
             localStorage.setItem("mbg_image_model", FALLBACK_IMAGE_MODEL);

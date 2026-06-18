@@ -25,6 +25,8 @@ jobs:
       - run: npm run build
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY2: ${{ secrets.GEMINI_API_KEY2 }}
+          GEMINI_API_KEY3: ${{ secrets.GEMINI_API_KEY3 }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
