@@ -1213,10 +1213,10 @@ export default function App() {
     // Safety check for system enabled
     if (!systemEnabled && !force) return;
     
-    // Safety check for cooldown
-    if (cooldownUntil && Date.now() < cooldownUntil) {
+    // Safety check for cooldown - force (manual click) bypasses cooldown
+    if (cooldownUntil && Date.now() < cooldownUntil && !force) {
       setQuotaReached(true);
-      if (force) setNotification(`Kota limiti nedeniyle ${new Date(cooldownUntil).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}'e kadar bekleniyor.`);
+      setNotification(`Kota limiti nedeniyle ${new Date(cooldownUntil).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}'e kadar bekleniyor.`);
       return;
     }
 
