@@ -410,9 +410,12 @@ export async function generateNewPiece(langCode: string = 'TR', forcedTimestamp?
     } catch (error: any) {
       const errorMsg = error?.message || JSON.stringify(error);
       
-      if (errorMsg.includes("RESOURCE_EXHAUSTED") || errorMsg.includes("429")) {
+      const isApiLimit = errorMsg.includes("RESOURCE_EXHAUSTED") || errorMsg.includes("429");
+      const isKeyInvalid = errorMsg.includes("API_KEY_INVALID") || errorMsg.includes("INVALID_ARGUMENT") || errorMsg.includes("API key not valid");
+      
+      if (isApiLimit || isKeyInvalid) {
         if (rotateApiKey()) {
-          console.log(`429 - rotating API key to #${currentKeyIndex + 1}`);
+          console.log(`API error - rotating key to #${currentKeyIndex + 1}`);
           continue;
         }
         if (currentImageModel === PRIMARY_IMAGE_MODEL) {
