@@ -33,6 +33,7 @@ const API_KEYS = [
   process.env.GEMINI_API_KEY,
   process.env.GEMINI_API_KEY2,
   process.env.GEMINI_API_KEY3,
+  process.env.GEMINI_API_KEY4,
 ].filter((k): k is string => typeof k === "string" && k.length > 0);
 
 let aiInstance: GoogleGenAI | null = null;

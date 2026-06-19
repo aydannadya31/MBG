@@ -8,6 +8,7 @@ export default defineConfig(({mode}) => {
   const apiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   const apiKey2 = env.GEMINI_API_KEY2 || process.env.GEMINI_API_KEY2;
   const apiKey3 = env.GEMINI_API_KEY3 || process.env.GEMINI_API_KEY3;
+  const apiKey4 = env.GEMINI_API_KEY4 || process.env.GEMINI_API_KEY4;
   return {
     base: './',
     plugins: [react(), tailwindcss()],
@@ -15,6 +16,7 @@ export default defineConfig(({mode}) => {
       'process.env.GEMINI_API_KEY': JSON.stringify(apiKey),
       'process.env.GEMINI_API_KEY2': JSON.stringify(apiKey2),
       'process.env.GEMINI_API_KEY3': JSON.stringify(apiKey3),
+      'process.env.GEMINI_API_KEY4': JSON.stringify(apiKey4),
     },
     resolve: {
       alias: {
